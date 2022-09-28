@@ -1,3 +1,13 @@
 {
-  "cSpell.words": ["celsopires", "github", "mysql", "stretchr", "usecase"]
+  "cSpell.words": [
+    "amqp",
+    "celsopires",
+    "github",
+    "mysql",
+    "rabbitmq",
+    "stretchr",
+    "timeseries",
+    "usecase",
+    "uuid"
+  ]
 }

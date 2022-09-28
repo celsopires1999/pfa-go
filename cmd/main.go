@@ -2,12 +2,18 @@ package main
 
 import (
 	"database/sql"
+	"encoding/json"
+	"fmt"
+	"sync"
 
 	"github.com/celsopires1999/pfa-go/internal/order/infra/database"
 	"github.com/celsopires1999/pfa-go/internal/order/usecase"
+	"github.com/celsopires1999/pfa-go/pkg/rabbitmq"
+	amqp "github.com/rabbitmq/amqp091-go"
 )
 
 func main() {
+	fmt.Println("application started")
 	db, err := sql.Open("mysql", "root:root@tcp(mysql:3306)/orders")
 	if err != nil {
 		panic(err)
@@ -15,14 +21,42 @@ func main() {
 	defer db.Close()
 	repository := database.NewOrderRepository(db)
 	uc := usecase.NewCalculateFinalPriceUseCase(repository)
-	input := usecase.OrderInputDTO{
-		ID:    "1234",
-		Price: 100,
-		Tax:   10,
-	}
-	output, err := uc.Execute(input)
+	ch, err := rabbitmq.OpenChannel()
 	if err != nil {
 		panic(err)
 	}
-	println(output.FinalPrice)
+	defer ch.Close()
+	out := make(chan amqp.Delivery)
+	go rabbitmq.Consume(ch, out)
+
+	const maxWorkers = 3
+	wg := sync.WaitGroup{}
+	wg.Add(maxWorkers)
+	for i := 0; i < maxWorkers; i++ {
+		defer wg.Done()
+		go worker(out, uc, i)
+	}
+	wg.Wait()
+	fmt.Println("application finished")
+}
+
+func worker(deliveryMessage <-chan amqp.Delivery, uc *usecase.CalculateFinalPriceUseCase, workerId int) {
+	fmt.Println("worker", workerId, "started")
+	for msg := range deliveryMessage {
+		var input usecase.OrderInputDTO
+		err := json.Unmarshal(msg.Body, &input)
+		if err != nil {
+			fmt.Println("error converting a message to json", err)
+			fmt.Println(msg.Body)
+		}
+		input.Tax = 10.0
+		_, err = uc.Execute(input)
+		if err != nil {
+			fmt.Println("error on final price calculation", err)
+			fmt.Println(input)
+		}
+		msg.Ack(false)
+		fmt.Println("Worker", workerId, "processed order", input.ID)
+	}
+	fmt.Println("worker", workerId, "finished")
 }
